@@ -1,0 +1,203 @@
+---
+title: "My Journey with mlr3oml — From Curiosity to Learning New fantastic thing"
+author: "Tripti"
+date: "March 2026"
+output: html_document
+---
+
+## How it started
+
+I had been familier with R which i used mostly for data analysis, plots. I never really thought of R as a machine learning tool. That was always Python territory for me. Scikit-learn, pandas, loading CSVs manually, waiting for downloads. It was a whole process.
+
+Then I came across this GSoC project — `mlr3hf` — and I got genuinely intersted. R for machine learning?
+I had never imagined R with machine learning and this made me very curious.
+
+So I just started. Opened RStudio, installed the packages and started typing.
+
+---
+
+## Step 1 — Installing the packages
+
+Here I learnt that a package connects directly to OpenML and pulls datasets like an API. I got really eager to find out how fast and clean it actually was compared to what I was used to. 
+
+```r
+install.packages("mlr3")
+install.packages("mlr3oml")
+```
+
+Honestly this felt very familiar. In Python you do `pip install`, here you do `install.packages()`. Same idea, different syntax. The packages installed without issues (there was a Rtools warning but it still worked fine).
+
+Then loading them:
+
+```r
+library(mlr3)
+library(mlr3oml)
+```
+
+Again — very similar to Python's `import`. I had worked a lot in python so it clicked immediately.
+
+---
+
+## Step 2 — My first attempt (and my first mistake)
+
+I got to know that `otsk()` fetches tasks from OpenML. I didn't read too much into it, I just ran it with task ID 61 to see what happens.
+
+```r
+t1 <- otsk(61)
+t1
+```
+
+```
+<OMLTask:61>
+ * Type: Learning Curve
+ * Data: anneal (id: 1; dim: 898x39)
+ * Estimation: crossvalidation (id: 14; repeats: 10, folds: 10)
+```
+
+Okay interesting. It pulled something. I noticed it said **"Learning Curve"** as the type — I didn't think much of it at first. I just moved on and tried to get the target column name.
+
+```r
+t1$target_names
+```
+
+```
+Error: Unsupported task type 'Learning Curve'
+```
+
+That stopped me. I expected a column name, got an error instead. So I went back and looked at what "Learning Curve" actually means as a task type — and it made sense. A Learning Curve task doesn't predict one thing, it measures how model accuracy changes as training data grows. There is no single target column. So `$target_names` has nothing to return.
+
+This was my first real learning moment — `otsk()` doesn't only return classification tasks. So I need to check the task type before assuming anything.
+
+---
+
+## Step 3 — Getting the right task type
+
+I switched to task ID 59 — iris. A classic. I knew this one would be classification.
+
+```r
+t2 <- otsk(59)
+t2
+```
+
+```
+<OMLTask:59>
+ * Type: Supervised Classification
+ * Data: iris (id: 61; dim: 150x5)
+ * Target: class
+ * Estimation: crossvalidation (id: 1; repeats: 1, folds: 10)
+```
+
+This time — Supervised Classification. Now `$target_names` and `$feature_names` worked perfectly.
+
+```r
+t2$target_names   # "class"
+t2$feature_names  # sepallength, sepalwidth, petallength, petalwidth
+```
+
+One thing I noticed here — `otsk()` is fast. It only fetches metadata at this point, not the actual data. It is like getting a book's description without opening the book. In Python, when I used to load datasets, everything would download upfront and took a lot of time — even the inbuilt ones like iris took a moment. Here it was almost instant which I really appreciated.
+
+---
+
+## Step 4 — My second mistake
+
+Now I wanted to see the actual rows of data. I thought `$data()` would work on the OMLTask object directly.
+
+```r
+head(t2$data())
+```
+
+```
+Error in head(t2$data()) : attempt to apply non-function
+```
+
+Tried a few variations:
+
+```r
+as.data.frame(t2$data())   # same error
+t2$data(rows = 1:6)        # same error
+```
+
+None of them worked. I was confused for a moment. Then I realized — `t2` at this point is still just an **OMLTask object** (metadata only). To actually get the data, I needed to convert it into a proper mlr3 task first using `as_task()`.
+
+```r
+iris_mlr3 <- as_task(t2)
+```
+
+This is when it actually downloaded the ARFF file from OpenML. And after this — `$data()` worked perfectly.
+
+```r
+iris_mlr3$data()[1:6, ]
+```
+
+```
+         class sepallength sepalwidth petallength petalwidth
+1: Iris-setosa         5.1        3.5         1.4        0.2
+2: Iris-setosa         4.9        3.0         1.4        0.2
+3: Iris-setosa         4.7        3.2         1.3        0.2
+```
+
+This is the moment it clicked for me. There are **two separate steps**:
+
+- `otsk()` → fetches metadata only
+- `as_task()` → fetches actual data and creates the mlr3 task
+
+One more thing I noticed when I looked at the output. Below each column name, R shows the datatype: `<fctr>`, `<num>`, `<int>`. Python doesn't show this by default when you print a dataframe. I actually liked this — you immediately know what type each column is without running a separate `dtype` check.
+
+---
+
+## Step 5 — Going bigger: Bank Marketing
+
+I wanted to try something much larger and messier. I picked the bank-marketing dataset — task ID 14965.
+
+```r
+t3 <- otsk(14965)
+bank_mlr3 <- as_task(t3)
+print(bank_mlr3)
+```
+
+```
+<TaskClassif> (45211x17)
+ * Target: Class
+ * Target classes: 1 (positive class, 88%), 2 (12%)
+ * Features (16):
+   fct (9): V2, V3, V4, V5, V7, V8, V9, V11, V16
+   int (7): V1, V6, V10, V12, V13, V14, V15
+```
+
+45,211 rows. I was honestly surprised at how fast it loaded compared to what I expected. In Python, loading a 45k row dataset from a URL involves downloading, reading into pandas, checking dtypes separately. Here it was a few seconds and everything was already structured as a proper task.
+
+The class imbalance immediately caught my eye — 88% class 1, only 12% class 2. I verified it:
+
+```r
+table(bank_mlr3$data()$Class)
+#     1     2
+# 39922  5289
+```
+
+---
+
+## Step 6 — Checking missing values
+
+In Python I would do `df.isnull().sum()`. In R:
+
+```r
+sum(is.na(iris_mlr3$data()))   # 0
+sum(is.na(bank_mlr3$data()))   # 0
+```
+
+`is.na()` is exactly like `isnull()` in pandas. Returns TRUE/FALSE for each cell, then `sum()` counts the TRUEs. Same logic, different syntax.
+
+---
+
+## What I actually learned
+
+The two mistakes I made taught me the most important thing about `otsk()`:
+
+**otsk() has a two-step design on purpose.**
+
+Step 1 — fetch metadata → lets you check task type, features, target without downloading anything heavy.
+Step 2 — as_task() → only then download the actual data.
+
+This is smart design. If you are browsing 50 datasets looking for the right one, you don't want to download all 50. You check metadata first, then download only what you need.
+
+Coming from ML only in Python, R felt surprisingly approachable. The package system, the syntax, the way data is structured — someone who knows Python can get comfortable here quickly. And for ML workflows specifically, mlr3 felt cleaner and faster than I expected.
